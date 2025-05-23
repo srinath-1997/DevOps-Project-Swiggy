@@ -1,0 +1,93 @@
+pipeline {
+    agent { label 'slave1' }
+    tools {
+        jdk 'OpenJDK 17'
+        nodejs 'node23'
+    }
+    environment {
+        SCANNER_HOME = tool 'sonar-scanner'
+        JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64'
+    }
+    stages {
+        stage('Clean Workspace') {
+            steps {
+                cleanWs()
+            }
+        }
+        stage('Checkout from Git') {
+            steps {
+                git 'https://github.com/srinath-1997/DevOps-Project-Swiggy.git'
+            }
+        }
+        stage('SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv('sonar-server') {
+                    withEnv(["JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64"]) {
+                        sh ''' 
+                        $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=Swiggy \
+                        -Dsonar.projectKey=Swiggy
+                        '''
+                    }
+                }
+            }
+        }
+        stage('Quality Gate') {
+            steps {
+                script {
+                    waitForQualityGate abortPipeline: false, credentialsId: 'Sonar-token'
+                }
+            }
+        }
+        stage('Install Dependencies') {
+            steps {
+                sh 'npm install'
+            }
+        }
+        stage('OWASP FS Scan') {
+            steps {
+                dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit', odcInstallation: 'DP-Check'
+                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+            }
+        }
+        stage('Trivy FS Scan') {
+            steps {
+                sh 'trivy fs . > trivyfs.txt'
+            }
+        }
+        stage('Docker Build & Push') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker-creds', toolName: 'docker') {
+                        sh 'docker build -t swiggy .'
+                        sh 'docker tag swiggy srinath7019/swiggy:latest'
+                        sh 'docker push srinath7019/swiggy:latest'
+                    }
+                }
+            }
+        }
+        stage('Trivy Image Scan') {
+            steps {
+                sh 'trivy image srinath7019/swiggy:latest > trivy.txt'
+            }
+        }
+        stage('K8s Deployment') {
+            steps {
+                script {
+                    withKubeConfig([credentialsId: 'kubeconfig-admin']) {
+                        sh '''
+                        echo "Current context:"
+                        kubectl config current-context
+
+                        echo "Available nodes:"
+                        kubectl get nodes
+
+                        echo "Applying manifests:"
+                        kubectl apply -f k8s/deployment.yaml
+                        kubectl apply -f k8s/service.yaml
+                        '''
+                    }
+                }
+            }
+        }
+    }
+}
