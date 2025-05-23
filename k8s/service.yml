@@ -4,7 +4,7 @@ metadata:
   name: swiggy-service
 spec:
   selector:
-    app: swiggy-project
+    app: Swiggy-project
   ports:
     - protocol: TCP
       port: 80
